@@ -111,7 +111,7 @@ int main(int argc, char **argv) {
     }
     vector<std::unordered_map<std::string, int>> local_maps(num_reducers);
     int un = 0;
-    #pragma omp parallel num_threads(num_reducers)
+    #pragma omp parallel num_threads(num_reducers) reduction(+:un)
     {
         int tid = omp_get_thread_num();
         while (true) {
@@ -124,7 +124,6 @@ int main(int argc, char **argv) {
         f.open(outfile);
         for (const auto& [word, count] : local_maps[tid]) f << word << " , " << count << endl;
         f.close();
-        #pragma omp atomic
         un += local_maps[tid].size();
     }
     cout << "Unique words: " << un << endl;
