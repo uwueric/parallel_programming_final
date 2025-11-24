@@ -102,7 +102,7 @@ int main(int argc, char **argv) {
                     if (w.second == -1) break;
                     auto it = local_unique.find(w.first);
                     if (it != local_unique.end()) it->second++;
-                    else local_unique.insert(make_pair(w.first, 1));
+                    else local_unique.insert(w);
                 }
                 for (const auto& p : local_unique) reducer_q[djb_hash(p.first, num_reducers)].rb_push(p);
             }
