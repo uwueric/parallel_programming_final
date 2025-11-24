@@ -1,0 +1,139 @@
+#include <omp.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/types.h>
+#include <dirent.h>
+#include <stdbool.h>
+#include <sys/stat.h>
+#include <ctype.h>
+#include <iostream>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <unordered_map>
+#include "rbuf2.h"
+
+#define MAX_WORD 60
+#define MAX_FILES 1024
+#define MAX_PATH 256
+#define MAX_UNIQUE 200000
+
+using namespace std;
+
+unsigned int djb_hash(const string &s, int num_reducers) {
+    unsigned long hash = 5381;
+    for (char c : s) hash = ((hash << 5) + hash) + c;
+    return hash % num_reducers;
+}
+
+string trim_punct(const string &s) {
+    if (s.empty()) return s;
+    size_t start = 0;
+    while (start < s.size() && ispunct(s[start])) start++;
+    size_t end = s.size();
+    while (end > start && ispunct(s[end - 1])) end--;
+    return s.substr(start, end - start);
+}
+
+static void process_line(const string &line, RingBuffer &rb) {
+    istringstream is(line);
+    string token;
+    while (getline(is, token, ' ')) {
+        istringstream is2(token);
+        string token2;
+        while(getline(is2, token2, '\t')) {
+            istringstream is3(token2);
+            string token3;
+            while(getline(is3, token3, '\r')) {
+                istringstream is4(token3);
+                string token4;
+                while(getline(is4, token4, '\n')) rb.rb_push(make_pair(trim_punct(token4), 1));
+            }
+        }
+    }
+}
+
+void reader(const char *path, RingBuffer &rb) {
+    string line;
+    ifstream f;
+    f.open(path);
+    if (!f.is_open()) {
+        printf("invalid file\n");
+        return;
+    }
+    while(getline(f, line)) process_line(line, rb);
+    f.close();
+}
+
+int main(int argc, char **argv) {
+    int num_readers, num_mappers, num_reducers;
+    num_readers = num_mappers = num_reducers = 2;
+    char path[MAX_PATH];
+    char files[MAX_FILES][MAX_PATH];
+    strcpy(path, argv[1]);
+    int nfiles = 0;
+    DIR *dp = opendir(path);
+    struct dirent *ep = NULL;
+    while ((ep = readdir(dp))) {
+        if (strncmp(ep->d_name, ".", 1) == 0 || strncmp(ep->d_name, "..", 2) == 0) continue;
+        sprintf(files[nfiles++], "%s/%s", path, ep->d_name);
+    }
+    closedir(dp);
+    printf("nfiles: %d\n", nfiles);
+    RingBuffer work_q;
+    vector<RingBuffer> reducer_q(num_reducers);
+    #pragma omp parallel sections
+    {
+        #pragma omp section
+        {
+            #pragma omp parallel for num_threads(num_readers)
+            for (size_t i = 0; i < nfiles; i++) reader(files[i], work_q);
+            for (size_t i = 0; i < num_mappers; i++) work_q.rb_push(make_pair(("___EOF___"), -1));
+        }
+        #pragma omp section
+        {
+            #pragma omp parallel num_threads(num_mappers)
+            {
+                std::unordered_map<std::string, int> local_unique;
+                int unique_words = 0;
+                std::pair<std::string, int> w;
+                while (true) {
+                    w = work_q.rb_pop();
+                    if (w.second == -1) break;
+                    auto it = local_unique.find(w.first);
+                    if (it != local_unique.end()) it->second++;
+                    else local_unique.insert(make_pair(w.first, 1));
+                }
+                for (const auto& p : local_unique) reducer_q[djb_hash(p.first, num_reducers)].rb_push(p);
+            }
+        for (size_t i = 0; i < num_reducers; i++) reducer_q[i].rb_push(make_pair("___EOF___", -1));
+        }
+    }
+    std::unordered_map<std::string, int> global_unique;
+    int unique_words = 0;
+    #pragma omp parallel num_threads(num_reducers) 
+    {   
+        size_t tid = omp_get_thread_num();
+        std::pair<std::string, int> cur_word;
+        while (true) {
+            cur_word = reducer_q[tid].rb_pop();
+            if (cur_word.second == -1) break;
+            #pragma omp critical 
+            {
+                auto it = global_unique.find(cur_word.first);
+                if (it != global_unique.end()) it->second += cur_word.second;
+                else {
+                    global_unique.insert(make_pair(cur_word.first, cur_word.second));
+                    unique_words++;
+                }
+            }
+        }
+    }
+    ofstream f;
+    f.open("out2.txt");
+    printf("unique words: %d\n", unique_words);
+    for (const auto& [word, count] : global_unique) f << word << " , " << count << endl;
+    f.close();
+    return 0;
+}
