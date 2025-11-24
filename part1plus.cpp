@@ -96,7 +96,6 @@ int main(int argc, char **argv) {
             #pragma omp parallel num_threads(num_mappers)
             {
                 std::unordered_map<std::string, int> local_unique;
-                int unique_words = 0;
                 std::pair<std::string, int> w;
                 while (true) {
                     w = work_q.rb_pop();
@@ -110,30 +109,24 @@ int main(int argc, char **argv) {
         for (size_t i = 0; i < num_reducers; i++) reducer_q[i].rb_push(make_pair("___EOF___", -1));
         }
     }
-    std::unordered_map<std::string, int> global_unique;
-    int unique_words = 0;
-    #pragma omp parallel num_threads(num_reducers) 
-    {   
-        size_t tid = omp_get_thread_num();
-        std::pair<std::string, int> cur_word;
+    vector<std::unordered_map<std::string, int>> local_maps(num_reducers);
+    int un = 0;
+    #pragma omp parallel num_threads(num_reducers)
+    {
+        int tid = omp_get_thread_num();
         while (true) {
-            cur_word = reducer_q[tid].rb_pop();
+            auto cur_word = reducer_q[tid].rb_pop();
             if (cur_word.second == -1) break;
-            #pragma omp critical 
-            {
-                auto it = global_unique.find(cur_word.first);
-                if (it != global_unique.end()) it->second += cur_word.second;
-                else {
-                    global_unique.insert(make_pair(cur_word.first, cur_word.second));
-                    unique_words++;
-                }
-            }
+            local_maps[tid][cur_word.first] += cur_word.second;
         }
+        string outfile = "out_" + std::to_string(tid) + ".txt";
+        ofstream f;
+        f.open(outfile);
+        for (const auto& [word, count] : local_maps[tid]) f << word << " , " << count << endl;
+        f.close();
+        #pragma omp atomic
+        un += local_maps[tid].size();
     }
-    ofstream f;
-    f.open("out2.txt");
-    printf("unique words: %d\n", unique_words);
-    for (const auto& [word, count] : global_unique) f << word << " , " << count << endl;
-    f.close();
+    cout << "Unique words: " << un << endl;
     return 0;
 }
