@@ -68,7 +68,15 @@ void reader(const char *path, RingBuffer &rb) {
 
 int main(int argc, char **argv) {
     int num_readers, num_mappers, num_reducers;
-    num_readers = num_mappers = num_reducers = 2;
+    if (argc < 3) {
+        cout << "usage: ./part1plus -path_to_directory -nthreads <-nreaders> <-nmappers> <-nreducers> (optional args in brackets)\n";
+        return 1;
+    }
+    cout << argv[2] << endl;
+    omp_set_num_threads(atoi(argv[2]));
+    num_readers = (argc >= 4) ? atoi(argv[3]) : atoi(argv[2]);
+    num_mappers = (argc >= 5) ? atoi(argv[4]) : atoi(argv[2]);
+    num_reducers = (argc >= 6) ? atoi(argv[5]) : atoi(argv[2]);
     char path[MAX_PATH];
     char files[MAX_FILES][MAX_PATH];
     strcpy(path, argv[1]);
@@ -83,16 +91,21 @@ int main(int argc, char **argv) {
     printf("nfiles: %d\n", nfiles);
     RingBuffer work_q;
     vector<RingBuffer> reducer_q(num_reducers);
+    double ostart = omp_get_wtime();
+    double reastart, mapstart, redstart, reaend, mapend, redend;
     #pragma omp parallel sections
     {
-        #pragma omp section
+        #pragma omp section 
         {
+            reastart = omp_get_wtime();
             #pragma omp parallel for num_threads(num_readers)
             for (size_t i = 0; i < nfiles; i++) reader(files[i], work_q);
             for (size_t i = 0; i < num_mappers; i++) work_q.rb_push(make_pair(("___EOF___"), -1));
+            reaend = omp_get_wtime();
         }
         #pragma omp section
         {
+            mapstart = omp_get_wtime();
             #pragma omp parallel num_threads(num_mappers)
             {
                 std::unordered_map<std::string, int> local_unique;
@@ -106,11 +119,13 @@ int main(int argc, char **argv) {
                 }
                 for (const auto& p : local_unique) reducer_q[djb_hash(p.first, num_reducers)].rb_push(p);
             }
+            mapend = omp_get_wtime();
         for (size_t i = 0; i < num_reducers; i++) reducer_q[i].rb_push(make_pair("___EOF___", -1));
         }
     }
     vector<std::unordered_map<std::string, int>> local_maps(num_reducers);
     int un = 0;
+    redstart = omp_get_wtime();
     #pragma omp parallel num_threads(num_reducers) reduction(+:un)
     {
         int tid = omp_get_thread_num();
@@ -126,6 +141,11 @@ int main(int argc, char **argv) {
         f.close();
         un += local_maps[tid].size();
     }
-    cout << "Unique words: " << un << endl;
+    redend = omp_get_wtime();
+    double oend = omp_get_wtime();
+    cout << "Unique words: " << un << endl << "Overall time with " << atoi(argv[2]) << " threads: " << oend - ostart << endl;
+    cout << "Reader section time with " << num_readers << " threads: " << reaend - reastart << endl;
+    cout << "Mapper section time with " << num_mappers << " threads: " << mapend - mapstart << endl;
+    cout << "Reducer section time with " << num_reducers << " threads: " << redend - redstart << endl;
     return 0;
 }
