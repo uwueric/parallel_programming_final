@@ -105,9 +105,12 @@ int main(int argc, char **argv) {
         }
         #pragma omp section
         {
+            double lmstart = 0, lmend = 0;
             mapstart = omp_get_wtime();
             #pragma omp parallel num_threads(num_mappers)
             {
+                #pragma omp single
+                lmstart = omp_get_wtime();
                 std::unordered_map<std::string, int> local_unique;
                 std::pair<std::string, int> w;
                 while (true) {
@@ -118,8 +121,12 @@ int main(int argc, char **argv) {
                     else local_unique.insert(w);
                 }
                 for (const auto& p : local_unique) reducer_q[djb_hash(p.first, num_reducers)].rb_push(p);
+                #pragma omp barrier
+                #pragma omp single
+                lmend = omp_get_wtime();
             }
-            mapend = omp_get_wtime();
+            mapstart = lmstart;
+            mapend = lmend;
         for (size_t i = 0; i < num_reducers; i++) reducer_q[i].rb_push(make_pair("___EOF___", -1));
         }
     }
