@@ -1,0 +1,7 @@
+Master found 29 files
+[rank 0] timings:
+  Reader   : 0.538951 s (threads=1)
+  Mapper   : 0.231436 s (threads=1)
+  Comm/MPI : 0.008096 s
+  Reducer+Writer : 1.055447 s (threads=1)
+  TOTAL    : 1.833933 s
